@@ -40,7 +40,7 @@ jobs:
 
     - name: Docker run
       id: docker-run-step
-      run: docker run --name devops-lab-app -d -p 8080:8080 ghcr.io/pinzdan/devops-la:${{ github.sha }}
+      run: docker run --name devops-lab-app -d -p 8080:8080 ghcr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
     - name: Wait Application Response
       run: |
