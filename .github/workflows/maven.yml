@@ -9,6 +9,9 @@ on:
 
 env:
   IMAGE_NAME: ghcr.io/pinzdan/devops-lab
+  AWS_REGION: eu-central-1                 
+  ECR_REPOSITORY: devops-labs
+  IAM_ROLE_ARN: arn:aws:iam::933516006450:role/gha-ecr-push-my-api-prod
 
 permissions:
         contents: read
@@ -110,8 +113,8 @@ jobs:
         run: docker rm -f devops-lab-app
     
     
-  publish:
-    name: Publish
+  publish-ghcr:
+    name: Publish GHCR
     needs: [ run ]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
@@ -143,5 +146,59 @@ jobs:
           docker push ${{ env.IMAGE_NAME }}:${{ github.sha }}
           docker push ${{ env.IMAGE_NAME }}:latest
 
-   
-    
+  publish-ecr:
+    name: Publish ECR
+    needs: [ run ]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+  
+    permissions:
+      id-token: write   # This is required for requesting the JWT
+      contents: read 
+
+    steps:
+  
+        - name: Download Docker image
+          uses: actions/download-artifact@v5
+          with:
+            name: docker-image-${{ github.sha }}
+            path: output
+          
+        - name: Load Docker image
+          run: docker load -i output/image.tar
+
+        - name: Configure AWS Credentials
+        
+          uses: aws-actions/configure-aws-credentials@v6.3.0
+          with:
+            role-to-assume: ${{env.IAM_ROLE_ARN}}
+            aws-region: ${{env.AWS_REGION}}
+            
+        - name: Verify AWS Identity
+          run: aws sts get-caller-identity
+
+        - name: Login to ECR
+          id: login-ecr
+          uses: aws-actions/amazon-ecr-login@v2
+
+        - name: Docker Tag & Push
+          env:
+            REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+            REPOSITORY: ${{env.ECR_REPOSITORY}}
+            IMAGE_TAG: ${{ github.sha }}
+          run: |
+            docker tag \
+              ${{ env.IMAGE_NAME }}:${{ github.sha }} \
+              $REGISTRY/$REPOSITORY:$IMAGE_TAG
+              
+            docker tag \
+              ${{ env.IMAGE_NAME }}:latest \
+              $REGISTRY/$REPOSITORY:latest
+              
+            docker push $REGISTRY/$REPOSITORY:$IMAGE_TAG
+            docker push $REGISTRY/$REPOSITORY:latest          
+
+
+
+
+
