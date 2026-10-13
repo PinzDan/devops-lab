@@ -84,6 +84,11 @@ jobs:
       - name: Docker Load
         run: docker load -i output/image.tar
 
+      - name: Extract Docker image metadata
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ vars.DOCKER_USERNAME }}/my-image
+          
       - name: Docker run
         id: docker-run-step
         run: docker run --name devops-lab-app -d -p 8080:8080 ${{ env.IMAGE_NAME }}:${{ github.sha }}
