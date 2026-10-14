@@ -37,58 +37,36 @@ jobs:
       
 
 
-  build:
+  build-and-verify:
     name: Build
     needs: [ test ]
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4    
-      
-      - name: Docker Build
-        run: |
-          docker build \
-          -t ${{ env.IMAGE_NAME }}:${{ github.sha }} \
-          -t ${{ env.IMAGE_NAME }}:latest \
-          .
-      
-      - name: Export Docker image
-        run: |
-          mkdir output &&
-          docker save \
-          ${{ env.IMAGE_NAME }}:${{ github.sha }} \
-          ${{ env.IMAGE_NAME }}:latest \
-          -o output/image.tar
-          
-      - name: Create Artifact
-        uses: actions/upload-artifact@v4
-        with: 
-          name: docker-image-${{ github.sha }}
-          path: output/image.tar
-          retention-days: 1
-      
-    
-  run:
-    name: run
-    needs: [build]
-    runs-on: ubuntu-latest
-
-    steps:
-
-      - name: Import Docker image
-        uses: actions/download-artifact@v5
-        with:
-          name: docker-image-${{ github.sha }}
-          path: output
-
-      - name: Docker Load
-        run: docker load -i output/image.tar
+      - uses: actions/checkout@v4   
 
       - name: Extract Docker image metadata
+        id: meta
         uses: docker/metadata-action@v6
         with:
-          images: ${{ vars.DOCKER_USERNAME }}/my-image
-          
+          images: ${{env.IMAGE_NAME }}
+          tags: |
+            type=sha,format=long,prefix=
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+      
+      - name: Docker Build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          push: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+        
+              
       - name: Docker run
         id: docker-run-step
         run: docker run --name devops-lab-app -d -p 8080:8080 ${{ env.IMAGE_NAME }}:${{ github.sha }}
@@ -99,11 +77,11 @@ jobs:
             if curl -fs http://localhost:8080/actuator/health > /dev/null; then
               echo "HealthCheck completed."
               exit 0
-            else
-              echo "Waiting for a reply ($i/30)..."
-              sleep 2
             fi
+            echo "Waiting for a reply ($i/30)..."
+            sleep 2
           done
+
           echo "L'applicazione non si è avviata entro i tempi previsti."
           exit 1
 
@@ -112,15 +90,32 @@ jobs:
         run: |
           echo "=== LOG DEL CONTAINER ==="
           docker logs devops-lab-app
-    
+        
       - name: Cleanup container
         if: always() && steps.docker-run-step.conclusion == 'success'
         run: docker rm -f devops-lab-app
+      
+      - name: Export Docker image
+        if: github.event_name == 'push'
+        run: |
+          mkdir -p output
+          docker save \
+            ${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            ${{ env.IMAGE_NAME }}:latest \
+            -o output/image.tar
+
+      - name: Upload Docker image artifact
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image-${{ github.sha }}
+          path: output/image.tar
+          retention-days: 1
     
     
   publish-ghcr:
     name: Publish GHCR
-    needs: [ run ]
+    needs: [ build-and-verify ]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
 
@@ -153,7 +148,7 @@ jobs:
 
   publish-ecr:
     name: Publish ECR
-    needs: [ run ]
+    needs: [ build-and-verify ]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
   
